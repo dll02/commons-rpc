@@ -110,7 +110,9 @@ public class ObjectWritable implements Writable, Configurable {
   }
 
   /** Write a {@link Writable}, {@link String}, primitive type, or an array of
-   * the preceding. */
+   * the preceding.
+   * 根据具体类型写入数据
+   * */
   public static void writeObject(DataOutput out, Object instance,
                                  Class declaredClass, 
                                  Configuration conf) throws IOException {

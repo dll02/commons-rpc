@@ -86,30 +86,35 @@ public class RPC {
 		     return buffer.toString();
 		}
 		
-		@Override
+//		@Override
 		public void setConf(Configuration conf) {
 			this.conf = conf;
 			
 		}
 
-		@Override
+//		@Override
 		public Configuration getConf() {
 			// TODO Auto-generated method stub
 			return this.conf;
 		}
 
-		
+		// 读取输入字段
 		public void readFields(DataInput in) throws IOException {
+			// 读方法名
 			methodName = UTF8.readString(in);
+			// 读参数长度
 			parameters = new Object[in.readInt()];
+			// 设置参数类型数组
 			parameterClasses = new Class[parameters.length];
 			ObjectWritable objectWritable = new ObjectWritable();
 			for(int i = 0; i < parameters.length; i++){
+				// 读参数
 				parameters[i] = ObjectWritable.readObject(in, objectWritable, conf);
+				// 读参数类型
 				parameterClasses[i] = objectWritable.getDeclaredClass();
 			}
 		}
-		
+		// 写出Invocation对象内容
 		public void write(DataOutput out) throws IOException {
 			UTF8.writeString(out, methodName);
 			out.writeInt(parameterClasses.length);
@@ -131,7 +136,7 @@ public class RPC {
 					protocol, rpcTimeout, conf);
 			this.client = CLIENTS.getClient(conf, factory);
 		}
-		@Override
+//		@Override
 		public Object invoke(Object proxy, Method method, Object[] args)
 			throws Throwable {
 			final boolean logDebug = LOG.isDebugEnabled();
@@ -139,7 +144,7 @@ public class RPC {
 			if (logDebug) {
 			    startTime = System.currentTimeMillis();
 			}
-
+			// 向远程发起请求 => 返回ObjectWritable类型的结果
 			 ObjectWritable value = (ObjectWritable)
 			    client.call(new Invocation(method, args), remoteId);
 			 if (logDebug) {
@@ -233,7 +238,7 @@ public class RPC {
 	      Class<? extends ProtocolInterface> protocol,
 	      long clientVersion, InetSocketAddress addr,
 	      Configuration conf, SocketFactory factory, int rpcTimeout) throws IOException {
-
+		// 生成代理对象
 	    ProtocolInterface proxy =
 	        (ProtocolInterface) Proxy.newProxyInstance(
 	            protocol.getClassLoader(), new Class[] { protocol },
@@ -265,7 +270,7 @@ public class RPC {
 	    return getProxy(protocol, clientVersion, addr, conf,
 	        NetUtils.getDefaultSocketFactory(conf), 0);
 	  }
-
+	  // 传入代理的server的class，客户端版本，远程地址，conf配置文件，rpc超时时间
 	  public static ProtocolInterface getProxy(
 	      Class<? extends ProtocolInterface> protocol,
 	      long clientVersion, InetSocketAddress addr, Configuration conf, int rpcTimeout)

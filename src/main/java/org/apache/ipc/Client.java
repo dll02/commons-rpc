@@ -36,6 +36,8 @@ public class Client {
 
 	public static final Log LOG = LogFactory.getLog(Client.class);
 	final static int PING_CALL_ID = -1;
+	// 每个连接<remoteAddress, protocol>都有特定的ConnectionId
+	// 没有线程池： 每个ConnectionId 一个连接
 	private Hashtable<ConnectionId, Connection> connections = new Hashtable<ConnectionId, Connection>();
 
 	private int counter; // counter for call ids
@@ -50,6 +52,7 @@ public class Client {
 	 * pool. Connections to a given ConnectionId are reused.
 	 */
 	private Connection getConnection(ConnectionId remoteId, Call call) throws IOException, InterruptedException {
+		// client是否关闭
 		if (!running.get()) {
 			// the client is stopped
 			throw new IOException("The client is stopped");
@@ -61,9 +64,11 @@ public class Client {
 		 * HashMap properly. For now its ok.
 		 */
 		do {
+			// 生成新的连接
 			synchronized (connections) {
 				connection = connections.get(remoteId);
 				if (connection == null) {
+					// 建立和远程的连接
 					connection = new Connection(remoteId);
 					connections.put(remoteId, connection);
 				}
@@ -74,6 +79,11 @@ public class Client {
 		// block above. The reason for that is if the server happens to be slow,
 		// it will take longer to establish a connection and that will slow the
 		// entire system down.
+		// 我们不会在"synchronized (connections)"中调用下面的方法
+		// 上面的块。原因是，如果服务器恰巧很慢，
+		// 它将需要更长的时间来建立连接，这将减慢
+		// 整个系统关闭。
+		// connection run起来&&setupIOstreams
 		connection.setupIOstreams();
 		return connection;
 	}
@@ -81,17 +91,22 @@ public class Client {
 	/**
 	 * This class holds the address.The client connections to servers are
 	 * uniquely identified by <remoteAddress, protocol>
+	 * 持有指定连接的信息
+	 * client链接server的唯一标志 <remoteAddress, protocol>
 	 */
 	static class ConnectionId {
 		InetSocketAddress address;
 		Class<?> protocol;
 		private int rpcTimeout;
+		// 最大空闲时间
 		private int maxIdleTime; // connections will be culled if it was idle
 									// for
 		// maxIdleTime msecs;
+		// 最大重试次数
 		private int maxRetries; // the max. no. of retries for socket
 								// connections
 		private boolean tcpNoDelay; // if T then disable Nagle's Algorithm
+		// ping的间隔次数
 		private int pingInterval; // how often sends ping to the server in mses;
 
 		private static final int PRIME = 16777619;
@@ -240,6 +255,7 @@ public class Client {
 	 * Thread that reads responses and notifiers callers. Each connection owns a
 	 * socket connected to a remote address. Calls are multiplexed through this
 	 * socket :responses may be delivered out of order.
+	 * 每个Connection 一个线程
 	 */
 	private class Connection extends Thread {
 		private InetSocketAddress server; // server ip:port
@@ -296,7 +312,7 @@ public class Client {
 		private void touch() {
 			lastActivity.set(System.currentTimeMillis());
 		}
-
+		// 把请求加入队列hashtable
 		private synchronized boolean addCall(Call call) {
 			if (shouldCloseConnection.get()) {
 				return false;
@@ -371,6 +387,7 @@ public class Client {
 		/*
 		 * Send a ping to the server if the time elapsed since last I/O activity
 		 * is equal to or greater than the ping interval
+		 * 发送ping
 		 */
 		private synchronized void sendPing() throws IOException {
 			long curTime = System.currentTimeMillis();
@@ -387,7 +404,9 @@ public class Client {
 		public void run() {
 			if (LOG.isDebugEnabled())
 				LOG.debug(getName() + ": starting, having connections " + connections.size());
-
+			// 循环读取返回结果
+			// 1.等待可以工作
+			// 2.close时
 			while (waitForWork()) {// wait here for work - read or close
 									// connection
 				receiveResponse();
@@ -410,6 +429,7 @@ public class Client {
 
 			DataOutputBuffer d = null;
 			try {
+				// 锁住输出流
 				synchronized (this.out) {
 					if (LOG.isDebugEnabled())
 						LOG.debug(getName() + " sending #" + call.id);
@@ -423,6 +443,7 @@ public class Client {
 					int dataLength = d.getLength();
 					out.writeInt(dataLength); // first put the data length
 					out.write(data, 0, dataLength);// write the data
+					// 输出param
 					out.flush();
 				}
 			} catch (IOException e) {
@@ -450,14 +471,16 @@ public class Client {
 
 				if (LOG.isDebugEnabled())
 					LOG.debug(getName() + " got value #" + id);
-
+				// 取出call
 				Call call = calls.get(id);
-
+				// 读状态
 				int state = in.readInt(); // read call status
 				if (state == Status.SUCCESS.state) {
+					// 读返回对象valueClass
 					Writable value = ReflectionUtils.newInstance(valueClass, conf);
 					((ObjectWritable) value).setConf(conf);
 					value.readFields(in); // read value
+					// 写出结果并notify等待请求的对象
 					call.setValue(value);
 					calls.remove(id);
 				} else if (state == Status.ERROR.state) {
@@ -504,6 +527,7 @@ public class Client {
 			short timeoutFailures = 0;
 			while (true) {
 				try {
+					// 创建设置该conn的socket
 					this.socket = socketFactory.createSocket();
 					this.socket.setTcpNoDelay(tcpNoDelay);
 					/*
@@ -527,12 +551,12 @@ public class Client {
 					 * 0)); } } }
 					 */
 					// connection time out is 20s
-
+					// 绑定SocketAddress，从conf读取 client.ip.name
 					this.socket.bind(new InetSocketAddress(conf.get("client.ip.name"), 0));
+					// 发起连接
 					NetUtils.connect(this.socket, server, 20000);
 					if (rpcTimeout > 0) {
-						pingInterval = rpcTimeout; // rpcTimeout overwrites
-													// pingInterval
+						pingInterval = rpcTimeout; // rpcTimeout overwrites pingInterval
 					}
 
 					this.socket.setSoTimeout(pingInterval);
@@ -616,6 +640,10 @@ public class Client {
 		 * Connect to the server and set up the I/O streams. It then sends a
 		 * header to the server and starts the connection thread that waits for
 		 * responses.
+		 * 1.和远程server建立连接
+		 * 2.设置I/O streams.
+		 * 3.发送一个header到server
+		 * 4.启动connection的线程等待返回
 		 */
 		private synchronized void setupIOstreams() throws InterruptedException {
 			if (socket != null || shouldCloseConnection.get()) {
@@ -631,9 +659,12 @@ public class Client {
 				 * rand = null;
 				 */
 				while (true) {
+					// 创建socket 建立远程的实际连接
 					setupConnection();
+					// 设置该socket的输入 输出流
 					InputStream inStream = NetUtils.getInputStream(socket);
 					OutputStream outStream = NetUtils.getOutputStream(socket);
+					// 写header
 					writeRpcHeader(outStream);
 					/*
 					 * if (useSasl) { final InputStream in2 = inStream; final
@@ -762,16 +793,19 @@ public class Client {
 		 * Return true if it is time to read a response; false otherwise.
 		 */
 		private synchronized boolean waitForWork() {
+			// 当calls是空的&& 是正常运行&& 非关闭状态
 			if (calls.isEmpty() && !shouldCloseConnection.get() && running.get()) {
+				// 现在的时间 - 上次更新时间 < maxIdletime
 				long timeout = maxIdletime - (System.currentTimeMillis() - lastActivity.get());
 				if (timeout > 0) {
 					try {
+						// 等待被唤醒(指定的还可以继续等待的时间)
 						wait(timeout);
 					} catch (InterruptedException e) {
 					}
 				}
 			}
-
+			// 判断是否需要关闭conn
 			if (!calls.isEmpty() && !shouldCloseConnection.get() && running.get()) {
 				return true;
 			} else if (shouldCloseConnection.get()) {
@@ -898,11 +932,13 @@ public class Client {
 	public Writable call(Writable param, ConnectionId remoteId) throws InterruptedException, IOException {
 		Call call = new Call(param);
 		Connection connection = getConnection(remoteId, call);
+		// 发送一次请求的参数
 		connection.sendParam(call); // send the parameter
 		boolean interrupted = false;
 		synchronized (call) {
 			while (!call.done) {
 				try {
+					// 等待该call的结果到达
 					call.wait(); // wait for the result
 				} catch (InterruptedException ie) {
 					// save the fact that we were interrupted
@@ -926,6 +962,7 @@ public class Client {
 					throw wrapException(connection.getRemoteAddress(), call.error);
 				}
 			} else {
+				// 返回call的结果
 				return call.value;
 			}
 		}

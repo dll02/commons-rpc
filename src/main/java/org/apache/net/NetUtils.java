@@ -61,7 +61,7 @@ public class NetUtils {
    * default socket factory.
    * 
    * @param conf the configuration
-   * @param clazz the class (usually a {@link ProtocolInterface})
+   * @param clazz the class (usually a { ProtocolInterface})
    * @return a socket factory
    */
   public static SocketFactory getSocketFactory(Configuration conf,
@@ -83,7 +83,7 @@ public class NetUtils {
   /**
    * Get the default socket factory as specified by the configuration
    * parameter <tt>hadoop.rpc.socket.factory.default</tt>
-   * 
+   * socket链接生成工厂
    * @param conf the configuration
    * @return the default socket factory as specified in the configuration or
    *         the JVM default socket factory if the configuration does not

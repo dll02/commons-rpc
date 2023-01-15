@@ -32,6 +32,10 @@ import java.io.IOException;
  * <p>Implementations typically implement a static <code>read(DataInput)</code>
  * method which constructs a new instance, calls {@link #readFields(DataInput)} 
  * and returns the instance.</p>
+ * 一个基于DataInput和DataOutput的可序列化对象，它实现了一个简单、有效的序列化协议。
+ * Hadoop Map-Reduce框架中的任何键或值类型都实现了这个接口。
+ * 实现通常实现一个静态的read(DataInput)方法，该方法构造一个新实例，
+ *  调用readFields(DataInput)并返回该实例。
  * 
  * <p>Example:</p>
  * <p><blockquote><pre>

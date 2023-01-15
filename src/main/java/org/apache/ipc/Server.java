@@ -212,6 +212,7 @@ public abstract class Server {
   /** A call queued for handling. */
   private static class Call {
     private int id;                               // the client's call id
+    // 对参数的序列化
     private Writable param;                       // the parameter passed
     private Connection connection;                // connection to client
     private long timestamp;     // the time received when response is null
@@ -236,10 +237,13 @@ public abstract class Server {
     }
   }
 
-  /** Listens on the socket. Creates jobs for the handler threads*/
+  /** Listens on the socket. Creates jobs for the handler threads
+   * 监听接入方的链接
+   * */
   private class Listener extends Thread {
     
     private ServerSocketChannel acceptChannel = null; //the accept channel
+    // 链接监听
     private Selector selector = null; //the selector that we use for the server
     private Reader[] readers = null;
     private int currentReader = 0;
@@ -251,11 +255,12 @@ public abstract class Server {
                                           //two cleanup runs
     private int backlogLength = conf.getInt("ipc.server.listen.queue.size", 128);
     private ExecutorService readPool; 
-   
+    // Listener 的构造函数初始化
     public Listener() throws IOException {
       address = new InetSocketAddress(bindAddress, port);
       // Create a new server socket and set to non blocking mode
       acceptChannel = ServerSocketChannel.open();
+      // 设置为非阻塞IO
       acceptChannel.configureBlocking(false);
 
       // Bind the server socket to the local host and port
@@ -266,6 +271,7 @@ public abstract class Server {
       readers = new Reader[readThreads];
       readPool = Executors.newFixedThreadPool(readThreads);
       for (int i = 0; i < readThreads; i++) {
+        // 为每个线程都创建一个新的readSelector 绑定
         Selector readSelector = Selector.open();
         Reader reader = new Reader(readSelector);
         readers[i] = reader;
@@ -285,7 +291,8 @@ public abstract class Server {
       Reader(Selector readSelector) {
         this.readSelector = readSelector;
       }
-      @Override
+      //@Override
+    // 监听socket请求  给每个线程都绑定一个Selector
 	public void run() {
         LOG.info("Starting SocketReader");
         synchronized (this) {
@@ -294,15 +301,19 @@ public abstract class Server {
             try {
               readSelector.select();
               while (adding) {
+                // 没有链接  等待
                 this.wait(1000);
               }              
-
+              // ready IO可读的事件
               Iterator<SelectionKey> iter = readSelector.selectedKeys().iterator();
               while (iter.hasNext()) {
                 key = iter.next();
+                // 拿出事件
                 iter.remove();
                 if (key.isValid()) {
+                  // 检查是否ready
                   if (key.isReadable()) {
+                    // 操作
                     doRead(key);
                   }
                 }
@@ -458,19 +469,26 @@ public abstract class Server {
     InetSocketAddress getAddress() {
       return (InetSocketAddress)acceptChannel.socket().getLocalSocketAddress();
     }
-    
+    // 接受新的可conn的socket
     void doAccept(SelectionKey key) throws IOException,  OutOfMemoryError {
       Connection c = null;
+      // 拿到远程建立的链接
       ServerSocketChannel server = (ServerSocketChannel) key.channel();
       SocketChannel channel;
       while ((channel = server.accept()) != null) {
+        // 是否是 阻塞同步IO
         channel.configureBlocking(false);
         channel.socket().setTcpNoDelay(tcpNoDelay);
+        // 拿到可读的reader池之一
         Reader reader = getReader();
         try {
+          // 开始监听IO
           reader.startAdd();
+          // 在reader上注册channel
           SelectionKey readKey = reader.registerChannel(channel);
+          // new 链接
           c = new Connection(readKey, channel, System.currentTimeMillis());
+          // key上添加conn
           readKey.attach(c);
           synchronized (connectionList) {
             connectionList.add(numConnections, c);
@@ -493,6 +511,7 @@ public abstract class Server {
       if (c == null) {
         return;  
       }
+      // 更新链接时间
       c.setLastContact(System.currentTimeMillis());
       
       try {
@@ -535,6 +554,7 @@ public abstract class Server {
     // The method that will return the next reader to work with
     // Simplistic implementation of round robin for now
     Reader getReader() {
+      // 线程池
       currentReader = (currentReader + 1) % readers.length;
       return readers[currentReader];
     }
@@ -565,12 +585,14 @@ public abstract class Server {
         try {
           waitPending();     // If a channel is being registered, wait.
           writeSelector.select(PURGE_INTERVAL);
+          // 该writeSelector上有事件发生
           Iterator<SelectionKey> iter = writeSelector.selectedKeys().iterator();
           while (iter.hasNext()) {
             SelectionKey key = iter.next();
             iter.remove();
             try {
               if (key.isValid() && key.isWritable()) {
+                // 执行异步写出数据
                   doAsyncWrite(key);
               }
             } catch (IOException e) {
@@ -633,8 +655,9 @@ public abstract class Server {
       if (key.channel() != call.connection.channel) {
         throw new IOException("doAsyncWrite: bad channel");
       }
-
+      // 锁住  每个connection上是pipeline处理队列
       synchronized(call.connection.responseQueue) {
+        // 处理返回 响应
         if (processResponse(call.connection.responseQueue, false)) {
           try {
             key.interestOps(0);
@@ -671,7 +694,7 @@ public abstract class Server {
     // Processes one response. Returns true if there are no more pending
     // data for this channel.
     //
-    private boolean processResponse(LinkedList<Call> responseQueue,
+    private boolean  processResponse(LinkedList<Call> responseQueue,
                                     boolean inHandler) throws IOException {
       boolean error = true;
       boolean done = false;       // there is more data for this channel.
@@ -698,12 +721,13 @@ public abstract class Server {
           }
           //
           // Send as much data as we can in the non-blocking fashion
-          //
+          // channel 写出call携带的响应
           int numBytes = channelWrite(channel, call.response);
           if (numBytes < 0) {
             return true;
           }
           if (!call.response.hasRemaining()) {
+            // 发送完成 connection的计数--
             call.connection.decRpcCount();
             if (numElements == 1) {    // last call fully processes.
               done = true;             // no more data for this channel.
@@ -717,8 +741,9 @@ public abstract class Server {
           } else {
             //
             // If we were unable to write the entire response out, then 
-            // insert in Selector queue. 
-            //
+            // insert in Selector queue.
+            // 如果我们不能写出整个响应，那么Selector queue中插入。
+            // responseQueue 队列插回头继续处理
             call.connection.responseQueue.addFirst(call);
             
             if (inHandler) {
@@ -729,12 +754,14 @@ public abstract class Server {
               try {
                 // Wakeup the thread blocked on select, only then can the call 
                 // to channel.register() complete.
+                // 唤醒writeSelector 注册写事件
                 writeSelector.wakeup();
                 channel.register(writeSelector, SelectionKey.OP_WRITE, call);
               } catch (ClosedChannelException e) {
                 //Its ok. channel might be closed else where.
                 done = true;
               } finally {
+                // pending--
                 decPending();
               }
             }
@@ -758,7 +785,7 @@ public abstract class Server {
 
     //
     // Enqueue a response from the application.
-    //
+    // 追加到responseQueue尾部
     void doRespond(Call call) throws IOException {
       synchronized (call.connection.responseQueue) {
         call.connection.responseQueue.addLast(call);
@@ -905,18 +932,21 @@ public abstract class Server {
         }
       
         if (!rpcHeaderRead) {
+          // 还没有读header
           //Every connection is expected to send the header.
           if (rpcHeaderBuffer == null) {
             rpcHeaderBuffer = ByteBuffer.allocate(1);
           }
           count = channelRead(channel, rpcHeaderBuffer);
           if (count < 0 || rpcHeaderBuffer.remaining() > 0) {
+            // 没读到或者读了一部分
             return count;
           }
           int version = rpcHeaderBuffer.get(0);
           //byte[] method = new byte[] {rpcHeaderBuffer.get(1)};
 //          authMethod = AuthMethod.read(new DataInputStream(
 //              new ByteArrayInputStream(method)));
+          // 从写到可读
           dataLengthBuffer.flip();          
           if (!HEADER.equals(dataLengthBuffer) || version != CURRENT_VERSION) {
             //Warning is ok since this is not supposed to happen.
@@ -929,13 +959,14 @@ public abstract class Server {
           dataLengthBuffer.clear();
           
           
-          
+          // 改状态
           rpcHeaderBuffer = null;
           rpcHeaderRead = true;
           continue;
         }
         
         if (data == null) {
+          // 从读到写
           dataLengthBuffer.flip();
           dataLength = dataLengthBuffer.getInt();
        
@@ -955,6 +986,7 @@ public abstract class Server {
         count = channelRead(channel, data);
         
         if (data.remaining() == 0) {
+          // 完整的读到了数据
           dataLengthBuffer.clear();
           data.flip();
           if (skipInitialSaslHandshake) {
@@ -979,6 +1011,7 @@ public abstract class Server {
         new DataInputStream(new ByteArrayInputStream(buf));
       header.readFields(in);
       try {
+        // 读取协议的class
         String protocolClassName = header.getProtocol();
         if (protocolClassName != null) {
           protocol = getProtocolClass(header.getProtocol(), conf);
@@ -1044,7 +1077,7 @@ public abstract class Server {
         
       if (LOG.isDebugEnabled())
         LOG.debug(" got #" + id);
-
+      // 读数据的类反射
       Writable param = ReflectionUtils.newInstance(paramClass, conf);//read param
       ((RPC.Invocation)param).setConf(conf);
       param.readFields(dis);        
@@ -1252,6 +1285,7 @@ public abstract class Server {
 
   /** Starts the service.  Must be called before any calls will be handled. */
   public synchronized void start() {
+    // 启动responder 和listener
     responder.start();
     listener.start();
     handlers = new Handler[handlerCount];
